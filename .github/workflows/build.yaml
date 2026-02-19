@@ -1,0 +1,73 @@
+name: Matrixed OpenTelemetry Distribution Build
+
+on:
+  push:
+    tags:
+      - "v*" # Runs when a version tag is pushed (e.g., v1.0.0)
+  workflow_dispatch: # Enables manual triggering from the GitHub UI
+
+permissions:
+  contents: write # This is required for creating/modifying releases
+
+jobs:
+  build:
+    # Configure build matrix to run multiple platform builds in parallel
+    strategy:
+      matrix:
+        include:
+          - platform: linux/amd64
+            artifact_name: linux-amd64
+          - platform: linux/arm64
+            artifact_name: linux-arm64
+          - platform: darwin/arm64
+            artifact_name: darwin-arm64
+          - platform: windows/amd64
+            artifact_name: windows-amd64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Build the OpenTelemetry distribution for this platform
+      # 'platforms' accepts a single OS/ARCH pair per job (e.g. linux/amd64)
+      - name: Build and Package
+        uses: observiq/otel-distro-builder@v1
+        with:
+          platforms: ${{ matrix.platform }}
+
+      # Upload platform-specific artifacts with a unique name
+      # These artifacts are available for download in the GitHub Actions UI
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: distribution-artifacts-${{ matrix.artifact_name }}
+          path: |
+            artifacts/*.deb
+            artifacts/*.rpm
+            artifacts/*.apk
+            artifacts/*.zip
+            artifacts/*.tar.gz
+            artifacts/*.sbom.json
+            artifacts/*_checksums.txt
+          retention-days: 5 # Artifacts are kept for 5 days then automatically deleted
+
+  # Create a single release containing all platform artifacts
+  release:
+    needs: build # Wait for all platform builds to complete
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Required permission for creating releases
+    steps:
+      # Download all platform-specific artifacts into a single directory
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-artifacts
+          pattern: distribution-artifacts-* # Match all our platform-specific artifacts
+          merge-multiple: true # Combine all artifacts into a single directory
+
+      # Create a GitHub Release and attach all platform artifacts
+      # This makes all platform builds available for download from the Releases page
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: all-artifacts/**/*
